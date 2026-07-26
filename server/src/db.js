@@ -1,29 +1,28 @@
-import mysql from "mysql2/promise";
+import pg from "pg";
 import { config } from "./config.js";
 
-export const pool = mysql.createPool({
-  host: config.db.host,
-  port: config.db.port,
-  user: config.db.user,
-  password: config.db.password,
-  database: config.db.database,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  charset: "utf8mb4_unicode_ci",
+const { Pool } = pg;
+
+// Neon (and most hosted Postgres) require SSL; local Postgres doesn't.
+const isLocal = /localhost|127\.0\.0\.1/.test(config.databaseUrl || "");
+
+export const pool = new Pool({
+  connectionString: config.databaseUrl,
+  ssl: isLocal ? false : { rejectUnauthorized: false },
+  max: 10,
 });
 
-// Small helper that returns rows directly.
+// Helper that returns rows directly (parity with the previous mysql helper).
 export async function query(sql, params = []) {
-  const [rows] = await pool.execute(sql, params);
-  return rows;
+  const res = await pool.query(sql, params);
+  return res.rows;
 }
 
 export async function assertConnection() {
-  const conn = await pool.getConnection();
+  const client = await pool.connect();
   try {
-    await conn.ping();
+    await client.query("SELECT 1");
   } finally {
-    conn.release();
+    client.release();
   }
 }
