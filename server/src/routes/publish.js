@@ -10,27 +10,26 @@ publishRouter.use(requireAuth);
 
 publishRouter.post("/:projectId/publish", async (req, res, next) => {
   try {
-    const owned = await query("SELECT * FROM projects WHERE id = ? AND user_id = ?", [req.params.projectId, req.user.id]);
+    const owned = await query("SELECT * FROM projects WHERE id = $1 AND user_id = $2", [req.params.projectId, req.user.id]);
     if (!owned.length) return res.status(404).json({ error: "Project not found" });
     const project = owned[0];
 
-    const pages = await query("SELECT * FROM pages WHERE project_id = ? ORDER BY sort_order, id", [project.id]);
+    const pages = await query("SELECT * FROM pages WHERE project_id = $1 ORDER BY sort_order, id", [project.id]);
     if (!pages.length) return res.status(400).json({ error: "Nothing to publish yet" });
 
-    // pages.content comes back parsed (JSON column) with mysql2
+    // content is JSONB -> already parsed by pg; guard just in case
     const parsed = pages.map((p) => ({ ...p, content: typeof p.content === "string" ? JSON.parse(p.content) : p.content }));
 
-    // wipe previous snapshot, write a fresh one
-    await query("DELETE FROM publications WHERE project_id = ?", [project.id]);
+    await query("DELETE FROM publications WHERE project_id = $1", [project.id]);
     const basePath = `/sites/${project.slug}`;
     for (const page of parsed) {
       const html = renderPage(page, parsed, basePath);
       await query(
-        "INSERT INTO publications (project_id, page_path, html) VALUES (?,?,?)",
+        "INSERT INTO publications (project_id, page_path, html) VALUES ($1,$2,$3)",
         [project.id, page.path, html]
       );
     }
-    await query("UPDATE projects SET is_published = 1, published_at = NOW() WHERE id = ?", [project.id]);
+    await query("UPDATE projects SET is_published = true, published_at = now() WHERE id = $1", [project.id]);
 
     res.json({
       ok: true,
@@ -43,10 +42,10 @@ publishRouter.post("/:projectId/publish", async (req, res, next) => {
 
 publishRouter.post("/:projectId/unpublish", async (req, res, next) => {
   try {
-    const owned = await query("SELECT id FROM projects WHERE id = ? AND user_id = ?", [req.params.projectId, req.user.id]);
+    const owned = await query("SELECT id FROM projects WHERE id = $1 AND user_id = $2", [req.params.projectId, req.user.id]);
     if (!owned.length) return res.status(404).json({ error: "Project not found" });
-    await query("DELETE FROM publications WHERE project_id = ?", [req.params.projectId]);
-    await query("UPDATE projects SET is_published = 0 WHERE id = ?", [req.params.projectId]);
+    await query("DELETE FROM publications WHERE project_id = $1", [req.params.projectId]);
+    await query("UPDATE projects SET is_published = false WHERE id = $1", [req.params.projectId]);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -55,20 +54,20 @@ publishRouter.post("/:projectId/unpublish", async (req, res, next) => {
 export const siteRouter = Router();
 
 async function serve(res, slug, path) {
-  const proj = await query("SELECT id, is_published FROM projects WHERE slug = ?", [slug]);
+  const proj = await query("SELECT id, is_published FROM projects WHERE slug = $1", [slug]);
   if (!proj.length || !proj[0].is_published) return res.status(404).send(notFound());
   const projectId = proj[0].id;
 
   let pagePath = path;
   if (!pagePath) {
     const home = await query(
-      `SELECT pg.path FROM pages pg WHERE pg.project_id = ? ORDER BY pg.is_home DESC, pg.sort_order LIMIT 1`,
+      `SELECT pg.path FROM pages pg WHERE pg.project_id = $1 ORDER BY pg.is_home DESC, pg.sort_order LIMIT 1`,
       [projectId]
     );
     pagePath = home.length ? home[0].path : "index";
   }
 
-  const rows = await query("SELECT html FROM publications WHERE project_id = ? AND page_path = ?", [projectId, pagePath]);
+  const rows = await query("SELECT html FROM publications WHERE project_id = $1 AND page_path = $2", [projectId, pagePath]);
   if (!rows.length) return res.status(404).send(notFound());
   res.set("Content-Type", "text/html; charset=utf-8").send(rows[0].html);
 }
