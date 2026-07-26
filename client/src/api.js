@@ -8,7 +8,20 @@ export const tokenStore = {
   clear: () => localStorage.removeItem(TOKEN_KEY),
 };
 
-export const api = axios.create({ baseURL: "/api" });
+// In dev, Vite proxies "/api" to the backend (see vite.config.js).
+// In production (e.g. frontend on Vercel, backend on Render/Railway),
+// set VITE_API_URL to your backend URL, e.g. https://blok-api.onrender.com
+const API_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL.replace(/\/$/, "")}/api`
+  : "/api";
+
+export const api = axios.create({ baseURL: API_BASE });
+
+// Base for public published sites ("/sites/:slug"). Empty in dev (Vite proxies it);
+// the backend origin in production.
+export const siteBase = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/$/, "")
+  : "";
 
 api.interceptors.request.use((cfg) => {
   const t = tokenStore.get();
