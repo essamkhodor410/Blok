@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, Square, LogOut, ExternalLink, Trash2, PenLine, Loader2, Globe, Layers, MoreHorizontal,
 } from "lucide-react";
-import { api } from "../api.js";
+import { api, siteBase } from "../api.js";
 import { useAuth } from "../auth.jsx";
 
 const GRADS = [
@@ -113,7 +113,7 @@ export default function Dashboard() {
                       {menuFor === p.id && (
                         <div className="dash-menu" onClick={(e) => e.stopPropagation()}>
                           <button onClick={() => nav(`/builder/${p.id}`)}><PenLine size={14} /> Open editor</button>
-                          {!!p.is_published && <a href={`/sites/${p.slug}`} target="_blank" rel="noopener"><ExternalLink size={14} /> View live</a>}
+                          {!!p.is_published && <a href={`${siteBase}/sites/${p.slug}`} target="_blank" rel="noopener"><ExternalLink size={14} /> View live</a>}
                           <button onClick={() => rename(p)}><PenLine size={14} /> Rename</button>
                           <button className="danger" onClick={() => remove(p.id)}><Trash2 size={14} /> Delete</button>
                         </div>
