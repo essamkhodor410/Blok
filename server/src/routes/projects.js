@@ -15,8 +15,8 @@ const slugify = (s) =>
 router.get("/", async (req, res, next) => {
   try {
     const rows = await query(
-      `SELECT p.*, (SELECT COUNT(*) FROM pages pg WHERE pg.project_id = p.id) AS page_count
-       FROM projects p WHERE p.user_id = ? ORDER BY p.updated_at DESC`,
+      `SELECT p.*, (SELECT COUNT(*)::int FROM pages pg WHERE pg.project_id = p.id) AS page_count
+       FROM projects p WHERE p.user_id = $1 ORDER BY p.updated_at DESC`,
       [req.user.id]
     );
     res.json({ projects: rows });
@@ -28,27 +28,26 @@ router.post("/", async (req, res, next) => {
   try {
     const name = (req.body?.name || "Untitled project").trim().slice(0, 160);
     const slug = `${slugify(name)}-${slugId()}`;
-    const result = await query(
-      "INSERT INTO projects (user_id, name, slug, settings) VALUES (?,?,?,?)",
+    const rows = await query(
+      "INSERT INTO projects (user_id, name, slug, settings) VALUES ($1,$2,$3,$4::jsonb) RETURNING *",
       [req.user.id, name, slug, JSON.stringify({ font: "Outfit" })]
     );
-    const projectId = result.insertId;
+    const project = rows[0];
     await query(
-      "INSERT INTO pages (project_id, name, path, content, is_home, sort_order) VALUES (?,?,?,?,1,0)",
-      [projectId, "Home", "index", JSON.stringify(starterHome())]
+      "INSERT INTO pages (project_id, name, path, content, is_home, sort_order) VALUES ($1,$2,$3,$4::jsonb, true, 0)",
+      [project.id, "Home", "index", JSON.stringify(starterHome())]
     );
-    const rows = await query("SELECT * FROM projects WHERE id = ?", [projectId]);
-    res.status(201).json({ project: rows[0] });
+    res.status(201).json({ project });
   } catch (e) { next(e); }
 });
 
 // get a single project with all pages
 router.get("/:id", async (req, res, next) => {
   try {
-    const rows = await query("SELECT * FROM projects WHERE id = ? AND user_id = ?", [req.params.id, req.user.id]);
+    const rows = await query("SELECT * FROM projects WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]);
     if (!rows.length) return res.status(404).json({ error: "Project not found" });
     const pages = await query(
-      "SELECT * FROM pages WHERE project_id = ? ORDER BY sort_order, id",
+      "SELECT * FROM pages WHERE project_id = $1 ORDER BY sort_order, id",
       [req.params.id]
     );
     res.json({ project: rows[0], pages });
@@ -58,14 +57,13 @@ router.get("/:id", async (req, res, next) => {
 // rename / update settings
 router.put("/:id", async (req, res, next) => {
   try {
-    const owned = await query("SELECT id FROM projects WHERE id = ? AND user_id = ?", [req.params.id, req.user.id]);
-    if (!owned.length) return res.status(404).json({ error: "Project not found" });
     const { name, settings } = req.body || {};
-    await query(
-      "UPDATE projects SET name = COALESCE(?, name), settings = COALESCE(?, settings) WHERE id = ?",
-      [name ?? null, settings ? JSON.stringify(settings) : null, req.params.id]
+    const rows = await query(
+      `UPDATE projects SET name = COALESCE($1, name), settings = COALESCE($2::jsonb, settings)
+       WHERE id = $3 AND user_id = $4 RETURNING *`,
+      [name ?? null, settings ? JSON.stringify(settings) : null, req.params.id, req.user.id]
     );
-    const rows = await query("SELECT * FROM projects WHERE id = ?", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "Project not found" });
     res.json({ project: rows[0] });
   } catch (e) { next(e); }
 });
@@ -73,8 +71,8 @@ router.put("/:id", async (req, res, next) => {
 // delete a project
 router.delete("/:id", async (req, res, next) => {
   try {
-    const result = await query("DELETE FROM projects WHERE id = ? AND user_id = ?", [req.params.id, req.user.id]);
-    if (!result.affectedRows) return res.status(404).json({ error: "Project not found" });
+    const rows = await query("DELETE FROM projects WHERE id = $1 AND user_id = $2 RETURNING id", [req.params.id, req.user.id]);
+    if (!rows.length) return res.status(404).json({ error: "Project not found" });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
