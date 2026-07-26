@@ -30,16 +30,16 @@ app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
 // central error handler
 app.use((err, _req, res, _next) => {
   console.error(err);
-  if (err?.code === "ER_DUP_ENTRY") return res.status(409).json({ error: "That value is already taken" });
+  if (err?.code === "23505") return res.status(409).json({ error: "That value is already taken" });
   res.status(500).json({ error: "Something went wrong on the server" });
 });
 
 async function start() {
   try {
     await assertConnection();
-    console.log("✓ Connected to MySQL");
+    console.log("✓ Connected to PostgreSQL");
   } catch (e) {
-    console.error("✗ Could not connect to MySQL. Check server/.env and that MySQL is running.");
+    console.error("✗ Could not connect to PostgreSQL. Check DATABASE_URL in server/.env.");
     console.error("  " + e.message);
   }
   app.listen(config.port, () => {
