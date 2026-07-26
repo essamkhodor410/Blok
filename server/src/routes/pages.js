@@ -6,15 +6,14 @@ import { starterBlank } from "../templates.js";
 const router = Router();
 router.use(requireAuth);
 
-// verify the user owns the project a page belongs to
 async function ownsProject(userId, projectId) {
-  const rows = await query("SELECT id FROM projects WHERE id = ? AND user_id = ?", [projectId, userId]);
+  const rows = await query("SELECT id FROM projects WHERE id = $1 AND user_id = $2", [projectId, userId]);
   return rows.length > 0;
 }
 async function ownsPage(userId, pageId) {
   const rows = await query(
     `SELECT pg.* FROM pages pg JOIN projects p ON p.id = pg.project_id
-     WHERE pg.id = ? AND p.user_id = ?`,
+     WHERE pg.id = $1 AND p.user_id = $2`,
     [pageId, userId]
   );
   return rows[0] || null;
@@ -33,8 +32,7 @@ router.post("/project/:projectId", async (req, res, next) => {
     const name = (req.body?.name || "New page").trim().slice(0, 160);
     let path = cleanPath(req.body?.path || name);
 
-    // ensure unique path within the project
-    const existing = await query("SELECT path FROM pages WHERE project_id = ?", [projectId]);
+    const existing = await query("SELECT path FROM pages WHERE project_id = $1", [projectId]);
     const taken = new Set(existing.map((r) => r.path));
     if (taken.has(path)) {
       let i = 2;
@@ -42,13 +40,12 @@ router.post("/project/:projectId", async (req, res, next) => {
       path = `${path}-${i}`;
     }
 
-    const orderRow = await query("SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM pages WHERE project_id = ?", [projectId]);
+    const orderRow = await query("SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM pages WHERE project_id = $1", [projectId]);
     const content = req.body?.content ?? starterBlank();
-    const result = await query(
-      "INSERT INTO pages (project_id, name, path, content, is_home, sort_order) VALUES (?,?,?,?,0,?)",
+    const rows = await query(
+      "INSERT INTO pages (project_id, name, path, content, is_home, sort_order) VALUES ($1,$2,$3,$4::jsonb, false, $5) RETURNING *",
       [projectId, name, path, JSON.stringify(content), orderRow[0].n]
     );
-    const rows = await query("SELECT * FROM pages WHERE id = ?", [result.insertId]);
     res.status(201).json({ page: rows[0] });
   } catch (e) { next(e); }
 });
@@ -63,17 +60,16 @@ router.put("/:pageId", async (req, res, next) => {
     let path = req.body?.path;
     if (path !== undefined) path = cleanPath(path);
 
-    // don't allow duplicate paths
     if (path && path !== page.path) {
-      const dup = await query("SELECT id FROM pages WHERE project_id = ? AND path = ? AND id <> ?", [page.project_id, path, page.id]);
+      const dup = await query("SELECT id FROM pages WHERE project_id = $1 AND path = $2 AND id <> $3", [page.project_id, path, page.id]);
       if (dup.length) return res.status(409).json({ error: "Another page already uses that path" });
     }
 
-    await query(
-      "UPDATE pages SET content = COALESCE(?, content), name = COALESCE(?, name), path = COALESCE(?, path) WHERE id = ?",
+    const rows = await query(
+      `UPDATE pages SET content = COALESCE($1::jsonb, content), name = COALESCE($2, name), path = COALESCE($3, path)
+       WHERE id = $4 RETURNING *`,
       [content !== undefined ? JSON.stringify(content) : null, name ?? null, path ?? null, page.id]
     );
-    const rows = await query("SELECT * FROM pages WHERE id = ?", [page.id]);
     res.json({ page: rows[0] });
   } catch (e) { next(e); }
 });
@@ -83,8 +79,8 @@ router.put("/:pageId/home", async (req, res, next) => {
   try {
     const page = await ownsPage(req.user.id, req.params.pageId);
     if (!page) return res.status(404).json({ error: "Page not found" });
-    await query("UPDATE pages SET is_home = 0 WHERE project_id = ?", [page.project_id]);
-    await query("UPDATE pages SET is_home = 1 WHERE id = ?", [page.id]);
+    await query("UPDATE pages SET is_home = false WHERE project_id = $1", [page.project_id]);
+    await query("UPDATE pages SET is_home = true WHERE id = $1", [page.id]);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -94,12 +90,12 @@ router.delete("/:pageId", async (req, res, next) => {
   try {
     const page = await ownsPage(req.user.id, req.params.pageId);
     if (!page) return res.status(404).json({ error: "Page not found" });
-    const count = await query("SELECT COUNT(*) AS c FROM pages WHERE project_id = ?", [page.project_id]);
+    const count = await query("SELECT COUNT(*)::int AS c FROM pages WHERE project_id = $1", [page.project_id]);
     if (count[0].c <= 1) return res.status(400).json({ error: "A project needs at least one page" });
-    await query("DELETE FROM pages WHERE id = ?", [page.id]);
+    await query("DELETE FROM pages WHERE id = $1", [page.id]);
     if (page.is_home) {
-      const next = await query("SELECT id FROM pages WHERE project_id = ? ORDER BY sort_order, id LIMIT 1", [page.project_id]);
-      if (next.length) await query("UPDATE pages SET is_home = 1 WHERE id = ?", [next[0].id]);
+      const nxt = await query("SELECT id FROM pages WHERE project_id = $1 ORDER BY sort_order, id LIMIT 1", [page.project_id]);
+      if (nxt.length) await query("UPDATE pages SET is_home = true WHERE id = $1", [nxt[0].id]);
     }
     res.json({ ok: true });
   } catch (e) { next(e); }
