@@ -27,15 +27,14 @@ router.post("/register", async (req, res, next) => {
     if (String(password).length < 6)
       return res.status(400).json({ error: "Password must be at least 6 characters" });
 
-    const existing = await query("SELECT id FROM users WHERE email = ?", [email]);
+    const existing = await query("SELECT id FROM users WHERE email = $1", [email]);
     if (existing.length) return res.status(409).json({ error: "An account with that email already exists" });
 
     const hash = await bcrypt.hash(password, 10);
-    const result = await query(
-      "INSERT INTO users (name, email, password_hash, provider) VALUES (?,?,?, 'local')",
+    const rows = await query(
+      "INSERT INTO users (name, email, password_hash, provider) VALUES ($1,$2,$3,'local') RETURNING *",
       [name, email, hash]
     );
-    const rows = await query("SELECT * FROM users WHERE id = ?", [result.insertId]);
     const user = rows[0];
     res.status(201).json({ token: signToken(user), user: publicUser(user) });
   } catch (e) { next(e); }
@@ -47,7 +46,7 @@ router.post("/login", async (req, res, next) => {
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
-    const rows = await query("SELECT * FROM users WHERE email = ?", [email]);
+    const rows = await query("SELECT * FROM users WHERE email = $1", [email]);
     const user = rows[0];
     if (!user || !user.password_hash)
       return res.status(401).json({ error: "Invalid email or password" });
@@ -62,14 +61,13 @@ router.post("/login", async (req, res, next) => {
 // ---------- current user ----------
 router.get("/me", requireAuth, async (req, res, next) => {
   try {
-    const rows = await query("SELECT * FROM users WHERE id = ?", [req.user.id]);
+    const rows = await query("SELECT * FROM users WHERE id = $1", [req.user.id]);
     if (!rows.length) return res.status(404).json({ error: "User not found" });
     res.json({ user: publicUser(rows[0]) });
   } catch (e) { next(e); }
 });
 
 // ---------- Google OAuth ----------
-// Step 1: send the browser to Google's consent screen.
 router.get("/google", (req, res) => {
   if (!config.google.enabled)
     return res.status(501).json({ error: "Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to server/.env" });
@@ -85,8 +83,6 @@ router.get("/google", (req, res) => {
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
-// Step 2: Google redirects back here with a code; exchange it, upsert the user,
-// then bounce to the client with a token.
 router.get("/google/callback", async (req, res, next) => {
   try {
     if (!config.google.enabled) return res.status(501).send("Google sign-in is not configured.");
@@ -113,14 +109,13 @@ router.get("/google/callback", async (req, res, next) => {
     const profile = await profileRes.json();
     if (!profile.email) return res.status(401).send("Could not read Google profile");
 
-    let rows = await query("SELECT * FROM users WHERE email = ?", [profile.email]);
+    let rows = await query("SELECT * FROM users WHERE email = $1", [profile.email]);
     let user = rows[0];
     if (!user) {
-      const result = await query(
-        "INSERT INTO users (name, email, avatar_url, provider) VALUES (?,?,?, 'google')",
+      rows = await query(
+        "INSERT INTO users (name, email, avatar_url, provider) VALUES ($1,$2,$3,'google') RETURNING *",
         [profile.name || profile.email.split("@")[0], profile.email, profile.picture || null]
       );
-      rows = await query("SELECT * FROM users WHERE id = ?", [result.insertId]);
       user = rows[0];
     }
 
